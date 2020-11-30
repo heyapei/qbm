@@ -32,7 +32,7 @@ public class HttpAspect {
 
 
     //@Pointcut("execution(public * com.hyp.myweixin.controller.*.*(..))")
-    @Pointcut("execution(* com.hyp.myweixin.controller..*.*(..))")
+    @Pointcut("execution(* com.hyp.qbm.controller..*.*(..))")
     private void pointcut() {
     }
 
