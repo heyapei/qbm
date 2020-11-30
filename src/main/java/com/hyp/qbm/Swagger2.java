@@ -37,7 +37,7 @@ public class Swagger2 {
                 .enable(true)
                 .apiInfo(apiInfo())
                 .select()
-                .apis(RequestHandlerSelectors.basePackage("com.hyp.myweixin.controller"))
+                .apis(RequestHandlerSelectors.basePackage("com.hyp.qbm.controller"))
                 .paths(PathSelectors.any())
                 .build();
     }
