@@ -1,12 +1,11 @@
 package com.hyp.qbm.aspect;
 
 import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.JoinPoint;
-import org.aspectj.lang.annotation.AfterReturning;
-import org.aspectj.lang.annotation.Aspect;
-import org.aspectj.lang.annotation.Before;
-import org.aspectj.lang.annotation.Pointcut;
+import org.aspectj.lang.ProceedingJoinPoint;
+import org.aspectj.lang.annotation.*;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -18,10 +17,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -31,6 +27,9 @@ import java.util.regex.Pattern;
 public class HttpAspect {
 
 
+    final static String BINDING_RESULT_FILTER = "org.springframework.validation.BeanPropertyBindingResult";
+
+
     //@Pointcut("execution(public * com.hyp.myweixin.controller.*.*(..))")
     @Pointcut("execution(* com.hyp.qbm.controller..*.*(..))")
     private void pointcut() {
@@ -38,7 +37,7 @@ public class HttpAspect {
 
 
     @Before("pointcut()")
-    public void around(JoinPoint joinPoint) {
+    public void before(JoinPoint joinPoint) {
         //记录http请求
         ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
         HttpServletRequest request = attributes.getRequest();
@@ -62,21 +61,24 @@ public class HttpAspect {
         String deviceType = this.check(ua) ? "mobile" : "pc";
         String deviceName = this.getDeviceName(ua);
         logString = logString + "，请求设备类型：" + deviceType + "，请求设备名：" + deviceName;
+
+        List arrList = new ArrayList();
         //获取请求参数
         try {
-            String reqBody = this.getReqBody();
-            if (reqBody == null || reqBody.length() <= 0) {
-                reqBody += "{";
-                Map<String, String[]> parameterMap = request.getParameterMap();
-                for (Map.Entry<String, String[]> entry : parameterMap.entrySet()) {
-                    reqBody += "\""+entry.getKey() + "\":";
-                    for (String s : entry.getValue()) {
-                        reqBody += s + ";";
+            // logString = logString + ",请求参数:" + new JSONArray(Arrays.asList(joinPoint.getArgs())).toString();
+
+            /*使用该步骤剔除绑定用BindingResult的参数打印*/
+            List<Object> objects = Arrays.asList(joinPoint.getArgs());
+            if (objects != null) {
+                arrList = new ArrayList(objects);
+                for (int i = 0; i < arrList.size(); i++) {
+                    String p = arrList.get(i).toString();
+                    if (p.contains(BINDING_RESULT_FILTER)) {
+                        arrList.remove(i);
                     }
                 }
-                reqBody += "}";
             }
-            logString = logString + ",请求参数:" + reqBody;
+            logString = logString + ",请求参数:" + new JSONArray(arrList).toString();
         } catch (Exception ex) {
             log.error("get Request Error: " + ex.getMessage());
         }
@@ -229,10 +231,72 @@ public class HttpAspect {
             while ((bytesRead = bufferedReader.read(charBuffer)) > 0) {
                 stringBuilder.append(charBuffer, 0, bytesRead);
             }
+
+
         } catch (IOException e) {
             log.error("get Post Request Parameter err : " + e.getMessage());
         }
         return stringBuilder.toString();
+    }
+
+
+    /**
+     * 环绕增强 :测试的时候finally的切面日志注释不打印,因为日志多了反而不好调试,上线时再取消注释
+     *
+     * @param jp
+     * @return
+     * @throws Throwable
+     */
+    @Around("pointcut()")
+    public Object aroundLogger(ProceedingJoinPoint jp) throws Throwable {
+        //记录http请求
+        ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        HttpServletRequest request = attributes.getRequest();
+        //从request中获取http请求的url/请求的方法类型／响应该http请求的类方法／IP地址／请求中的参数
+        //得到session对象
+        HttpSession session = request.getSession(false);
+        //取出请求用户
+        //ip
+        String logString = "环绕日志--访问IP:{" + request.getRemoteAddr() + "}" + ",请求地址:{" + request.getRequestURI() + "}" + ",HTTP方法:{" + request.getMethod() + "}" + ",控制层:{" + jp.getSignature().getDeclaringTypeName() + "}" + ",请求服务:{" + jp.getSignature().getName() + "}";
+        String ua = request.getHeader("User-Agent").toLowerCase();
+        String deviceType = this.check(ua) ? "mobile" : "pc";
+        String deviceName = this.getDeviceName(ua);
+        logString = logString + ",请求设备类型：" + deviceType + "，请求设备名：" + deviceName;
+        //获取请求参数
+        List arrList = new ArrayList();
+        try {
+            List<Object> objects = Arrays.asList(jp.getArgs());
+            if (objects != null) {
+                arrList = new ArrayList(objects);
+                for (int i = 0; i < arrList.size(); i++) {
+                    String p = arrList.get(i).toString();
+                    if (p.contains(BINDING_RESULT_FILTER)) {
+                        arrList.remove(i);
+                    }
+                }
+            }
+            logString = logString + ",请求参数:" + new JSONArray(arrList).toString();
+        } catch (Exception ex) {
+            logString = logString + ",请求入参为:图片,视频,excel,PDF等格式(此时无法转换成JSON格式)";
+            //由于知道这里异常的原因是json转换参数异常,所以就不打印了,不捕获,以免控制台难看或者日志难看
+            ex.printStackTrace();
+        }
+
+        try {
+            Object result = jp.proceed();
+            logString = logString + ",方法返回值:" + JSON.toJSONString(result);
+            return result;
+        } catch (Throwable e) {
+            logString = logString + ",访问的接口:" + jp.getTarget().getClass().getName() + "." + jp.getSignature().getName();
+            logString = logString + ",请求入参为:" + new JSONArray(Arrays.asList(jp.getArgs())).toString();
+            logString = logString + jp.getSignature().getName() + " 方法发生异常【" + e + "】";
+            throw e;
+        } finally {
+            //logString = logString +"访问的接口: " + jp.getTarget().getClass().getName() + "."+jp.getSignature().getName();
+            //logString = logString +"请求入参为: "+ new JSONArray(Arrays.asList(jp.getArgs())).toString();
+            //logString = logString +"执行     :" + jp.getSignature().getName() + "方法结束。";
+            log.info(logString);
+        }
     }
 
 }
